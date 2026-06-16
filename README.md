@@ -29,9 +29,11 @@ A deployment requires a server: a Linux machine with administrator
 Installation procedures for this software differ per operating system. Follow the
 official instructions for [Docker Engine](https://docs.docker.com/engine/install/)
 and the [Docker Compose plugin](https://docs.docker.com/compose/install/); git is
-available through the package manager of every common Linux distribution. Once
-this software is installed, the remaining deployment steps are identical across
-operating systems, because Docker runs the application in the same way on each.
+available through the package manager of every common Linux distribution. The
+[Preparing the server](#preparing-the-server) section gives a worked example for
+Ubuntu. Once this software is installed, the remaining deployment steps are
+identical across operating systems, because Docker runs the application in the
+same way on each.
 
 The two items above are sufficient for a basic deployment over plain HTTP. The
 NGINX web server and the PostgreSQL database both run inside their own Docker
@@ -51,6 +53,71 @@ Depending on the features required, the following are also needed:
   [Email server](#email-server).
 - **Open firewall ports**, at minimum the port on which the application is
   served (for example, port `80` for HTTP, or ports `80` and `443` for HTTPS).
+
+## Preparing the server
+
+The deployment requires Docker, the Docker Compose plugin, and git on the server,
+as listed under [Prerequisites](#prerequisites). The commands in this section
+install them on a fresh **Ubuntu** server, such as a DigitalOcean droplet or a
+Hetzner Cloud VM. On other distributions, follow the official [Docker
+installation instructions](https://docs.docker.com/engine/install/) instead; the
+remaining sections are the same on every system.
+
+### Install Docker
+
+Connect to the server over SSH, then update the package list, remove any
+conflicting older packages, and install Docker from its official repository:
+
+```
+$ sudo apt-get update
+$ for pkg in docker.io docker-doc docker-compose docker-compose-v2 \
+    podman-docker containerd runc; do sudo apt-get remove $pkg; done
+$ sudo apt-get install ca-certificates curl gnupg
+$ sudo install -m 0755 -d /etc/apt/keyrings
+$ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+$ sudo chmod a+r /etc/apt/keyrings/docker.gpg
+$ echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+$ sudo apt-get update
+$ sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+Enter 'Y' if prompted. If questions about restarting services appear, select OK.
+Verify that Docker and the Docker Compose plugin work:
+
+```
+$ sudo docker run hello-world
+$ docker compose version
+```
+
+The first command should print a 'Hello from Docker' message. If the Compose
+command is not found, install it explicitly with `sudo apt-get install
+docker-compose-plugin`.
+
+### Configure the firewall
+
+As best practice, enable the firewall and open only the ports that are needed.
+For the plain-HTTP [Quick start](#quick-start-http-without-a-domain-name), open
+SSH and the frontend port (8080 by default):
+
+```
+$ sudo ufw default allow outgoing
+$ sudo ufw default deny incoming
+$ sudo ufw allow ssh
+$ sudo ufw allow 8080
+$ sudo ufw enable
+```
+
+The backend port (8081) does not need to be opened, because the backend is
+reachable only from within the Docker network. For an HTTPS deployment, open
+ports 80 and 443 instead (see [Upgrading security: migrate to
+HTTPS](#upgrading-security-migrate-to-https)).
+
+Cloud providers such as DigitalOcean and Hetzner apply a second, independent
+firewall in their web console. When one is attached to the server, the same ports
+must be opened there as well.
 
 ## Quick start (HTTP, without a domain name)
 
@@ -140,15 +207,11 @@ configured frontend port, for example `http://<server-IP>:8080` (or
 should appear. By default, account creation is enabled, so the first user can
 register directly from the sign-in page.
 
-Ensure that the frontend port is open in the server's firewall. The firewall tool
-differs per distribution (for example, `ufw` on Ubuntu and Debian, `firewalld` on
-CentOS and RHEL).
-
-Cloud providers such as Hetzner and DigitalOcean apply a **second, independent
-firewall** in their web console, separate from the firewall on the server itself.
-When the application is unreachable even though the server's own firewall allows
-the port, this provider-level firewall is the most common cause: the port must be
-opened there as well.
+Ensure that the frontend port is open in the server's firewall (see [Configure
+the firewall](#configure-the-firewall)). On a cloud provider, the port must also
+be opened in the provider's web-console firewall; this provider-level firewall is
+the most common reason an application is unreachable even though the server's own
+firewall allows the port.
 
 Once the application responds, stop the attached containers with `Ctrl+C` and
 start them again in detached (background) mode:
@@ -159,221 +222,6 @@ $ docker compose up -d
 
 The application then keeps running after the terminal is closed and restarts
 automatically if the server reboots.
-
-## Deploy to production
-
-To run the ASReview LAB application as a shared service, a more elaborate Docker
-container setup is advised. A common, robust setup for a Flask application like
-ASReview LAB is to use [Gunicorn](https://gunicorn.org/) as a WSGI server and
-use [NGINX](https://www.nginx.com/) as a reverse proxy. See the Flask
-documentation on [Deploying to
-Production](https://flask.palletsprojects.com/en/3.0.x/deploying/) for more
-information.
-
-ASReview Server Stack consists of three Docker containers: a PostgreSQL
-database, an ASReview application, and an NGINX container. [Docker
-Compose](https://docs.docker.com/compose/) is used to run and serve this
-multi-container application. The following files in this folder are of interest:
-
-- `.env` - An environment variable file for all relevant (secret) parameters
-  (ports, frontend-domain, database, and Gunicorn related parameters)
-- `asreview.conf` - an NGINX configuration file
-- `docker-compose.yml` - the Docker Compose file that will create the Docker
-  containers
-- `asreview_config.toml` - the ASReview LAB config file with, for example,
-  authentication options and email server configuration.
-
-### Running the containers
-
-A clone or copy of the ASReview Server Stack folder is required. From the
-**root** folder of the application, the `docker compose` command starts the
-Docker containers in attached mode:
-
-```
-$ docker compose up
-```
-
-### Email server
-
-For account verification, but also for the forgot-password feature, an email
-server is required. However, maintaining an email server can be demanding. This can be avoided by using a third-party service like
-[SendGrid](https://sendgrid.com/). Email server
-settings can be set in the `asreview_config.toml` file.
-
-#### SendGrid
-
-This recipe uses the SMTP Relay Service from
-[SendGrid](https://sendgrid.com/): every email sent by the ASReview application
-is relayed by this service. SendGrid is free as long as the application does not
-send more than 100 emails per day. Receiving reply emails from end users is not
-possible when the Relay service is used.
-
-Create an account at SendGrid. Sign in and click on "Email API" in the menu and
-subsequently click on the "Integration Guide" link. Then, choose "SMTP Relay",
-create an API key and copy the resulting settings (Server, Ports, Username and
-Password) into the `asreview_config.toml` file. It is important to continue checking
-the "I've updated my settings" checkbox when it is visible **and** click on the
-"Next: verify Integration" button before running the Docker containers.
-
-It is important to verify the reply address of any email the application
-will send. While being logged in on the SendGrid website, click on "Settings" in
-the menu, then on "Sender Authentication" and follow the instructions.
-
-Please note that sending emails via SendGrid with SSL requires port 465 to be
-open for outbound connections on the server. Ensure that the firewall is configured
-appropriately.
-
-### Parameters in the .env file
-
-The `.env` file contains parameters to deploy all containers. All variables that
-end with the `_PORT` suffix refer to the Docker containers' external
-network ports. The prefix of these variables explains for which container they
-are used. Note that the external port of the frontend Docker container, the container
-that is accessed directly by the end user, is 8080 and not 80. This can be changed to
-80 to avoid port numbers in the URL of the ASReview LAB
-application.
-
-The value of the `WORKERS` parameter determines how many instances of the
-ASReview application Gunicorn starts.
-
-Variables prefixed with `POSTGRES` are intended for use with the PostgreSQL
-database. The `_USER` and `_PASSWORD` variables represent the database user and
-password, respectively. The `_DB` variable specifies the database name.
-
-> ⚠️ The password in the `.env` file should be changed. When deploying
-  Docker containers in a public environment, it is advisable to change the
-  database user to something less predictable and to strengthen the password for
-  enhanced security.
-
-## Deploying to cloud provider
-
-### Digital Ocean
-
-The following section describes how to deploy the authenticated application with
-email verification on [Digital Ocean](https://www.digitalocean.com/). The
-deployment is done on a bare Droplet running Ubuntu 22.04 with 1 CPU, 2 GB of
-memory and a 50 GB SSD disk. Root access is assumed.
-
-The first consideration is a (sub)domain name. If one is available, it should
-point to the IP address of the Droplet. In this description, the IP
-address is used to reach the application through a browser.
-
-Email verification (also handy for forgotten passwords) is used. For that, a
-SendGrid password is required that comes from the [SendGrid setup](#sendgrid).
-
-Connect to the Droplet over SSH, update the list of packages and install the
-software for Docker:
-
-```
-$ sudo apt-get update
-$ for pkg in docker.io docker-doc docker-compose docker-compose-v2 \
-    podman-docker containerd runc; do sudo apt-get remove $pkg; done
-$ sudo apt-get install ca-certificates curl gnupg
-$ sudo install -m 0755 -d /etc/apt/keyrings
-$ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-$ sudo chmod a+r /etc/apt/keyrings/docker.gpg
-$ echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-$ sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-```
-
-Enter 'Y' if prompted. If questions about restarting services appear, just
-select OK. To verify that everything is running, create a test Docker container:
-
-```
-$ sudo docker run hello-world
-```
-
-If all is well, a message 'Hello from Docker' should appear with other
-information. Next, verify that Docker Compose is installed:
-
-```
-$ docker compose version
-```
-
-If this fails, install Docker Compose with:
-
-```
-$ sudo apt-get install docker-compose-plugin
-```
-
-The next step concerns ports. As best practice, the firewall is enabled and only
-the required ports are opened. In this manual the frontend runs on port 8080 (deliberately
-deviating from the usual port 80), and the backend on 8081.
-
-```
-$ sudo ufw default allow outgoing
-$ sudo ufw default deny incoming
-$ sudo ufw allow ssh
-$ sudo ufw allow 8080
-$ sudo ufw allow 8081
-$ sudo ufw enable
-```
-
-Clone the ASReview Server Stack repository onto the server:
-
-```
-$ git clone https://github.com/asreview/asreview-server-stack.git
-```
-
-The next step is configuring the `.env` file in the server stack folder. Substitute
-`localhost` for the Droplet's IP address and enter the reserved external port
-numbers:
-
-```
-FRONTEND_DOMAIN=http://<IP address of Droplet>
-
-FRONTEND_EXTERNAL_PORT=8080
-BACKEND_EXTERNAL_PORT=8081
-
-POSTGRES_PASSWORD="<Postgres Password>"
-POSTGRES_USER="postgres"
-POSTGRES_DB="asreview_db"
-```
-
-After this, the containers can be built. With the server stack root folder as the
-working directory, the following command is used:
-
-```
-$ docker compose up
-```
-
-This typically takes a couple of minutes. Wait until all Docker containers are
-accounted for; the backend container takes a little longer to start than the
-others. The application can then be accessed by browsing to the IP address. Note
-that the instance runs on HTTP, **not** HTTPS. Once this works, stop the
-containers and start them again in detached mode:
-
-```
-docker compose up -d
-```
-
-### Troubleshooting
-
-If the containers are built and running, but the application is unresponsive,
-consider the following guidelines:
-
-If there is no response whatsoever (not even a white page with a spinner), check the URL
-and the protocol used in the browser. Is HTTP used instead of
-HTTPS, and is the correct port being used (`http://<IP-address>:8080`)? If
-so, verify that the designated ports are actually open on the server.
-
-In the `asreview_config.toml` the `SESSION_COOKIE_SAMESITE` parameter is set to the recommended
-"Lax" value. In this Docker setup, it is assumed that both the backend and
-frontend can be accessed using the same domain name or IP address. When this is
-not the case, the value of `SESSION_COOKIE_SAMESITE` must be set to the
-string "None". Although this is an unusual setup it may help when only the
-backend and database containers are deployed and a different frontend runs on
-another server.
-
-Finally, this setup does not support encryption. Its purpose is to deploy the
-application as easily and quickly as possible. Dealing with certificates makes
-things more complex (see the following section). Since the unencrypted HTTP protocol is used, the
-`SESSION_COOKIE_SECURE` and `REMEMBER_COOKIE_SECURE` parameters in
-`asreview_config.toml` are set to `false`. When the setup is adjusted to work with
-certificates, it is best practice to set these values to `true`.
 
 ## Upgrading security: migrate to HTTPS
 
@@ -395,7 +243,7 @@ The firewall tool differs per distribution. On Ubuntu and Debian, using `ufw`:
 $ sudo ufw allow 80
 $ sudo ufw allow 443
 ```
-As in the [Quick start](#quick-start-http-without-a-domain-name), cloud providers such as Hetzner and DigitalOcean require these ports to be opened in their separate web-console firewall as well.
+As in [Preparing the server](#configure-the-firewall), cloud providers such as Hetzner and DigitalOcean require these ports to be opened in their separate web-console firewall as well.
 
 ### Domain name and certificates
 
@@ -476,3 +324,109 @@ $ docker compose down
 $ docker compose up -d
 ```
 The application is now served over HTTPS and can be reached at `https://<domain name>`.
+
+## Reference
+
+### How it works
+
+ASReview Server Stack runs the application as three Docker containers,
+orchestrated by [Docker Compose](https://docs.docker.com/compose/):
+
+- a **PostgreSQL** database;
+- the **ASReview** application, served by [Gunicorn](https://gunicorn.org/) as a
+  WSGI server;
+- an **NGINX** container acting as a reverse proxy in front of the application.
+
+This mirrors a common, robust setup for a Flask application like ASReview LAB;
+see the Flask documentation on [Deploying to
+Production](https://flask.palletsprojects.com/en/3.0.x/deploying/) for
+background.
+
+The following files in the repository configure the deployment:
+
+- `.env` — environment variables for all relevant (secret) parameters: ports,
+  database credentials, and the number of Gunicorn workers.
+- `docker-compose.yml` — the Docker Compose file that defines and connects the
+  three containers.
+- `asreview_config.toml` — the ASReview LAB configuration file (authentication
+  options, secret key, email server settings, and so on).
+- `asreview.conf` — the NGINX configuration used for plain HTTP.
+- `asreview_https.conf` — the NGINX configuration used for HTTPS.
+
+### Parameters in the .env file
+
+The `.env` file contains parameters to deploy all containers. All variables that
+end with the `_PORT` suffix refer to the Docker containers' external
+network ports. The prefix of these variables explains for which container they
+are used. Note that the external port of the frontend Docker container, the container
+that is accessed directly by the end user, is 8080 and not 80. This can be changed to
+80 to avoid port numbers in the URL of the ASReview LAB
+application.
+
+The value of the `WORKERS` parameter determines how many instances of the
+ASReview application Gunicorn starts.
+
+Variables prefixed with `POSTGRES` are intended for use with the PostgreSQL
+database. The `_USER` and `_PASSWORD` variables represent the database user and
+password, respectively. The `_DB` variable specifies the database name.
+
+> ⚠️ The password in the `.env` file should be changed. When deploying
+  Docker containers in a public environment, it is advisable to change the
+  database user to something less predictable and to strengthen the password for
+  enhanced security.
+
+### Email server
+
+For account verification, but also for the forgot-password feature, an email
+server is required. However, maintaining an email server can be demanding. This can be avoided by using a third-party service like
+[SendGrid](https://sendgrid.com/). Email server
+settings can be set in the `asreview_config.toml` file.
+
+#### SendGrid
+
+This recipe uses the SMTP Relay Service from
+[SendGrid](https://sendgrid.com/): every email sent by the ASReview application
+is relayed by this service. SendGrid is free as long as the application does not
+send more than 100 emails per day. Receiving reply emails from end users is not
+possible when the Relay service is used.
+
+Create an account at SendGrid. Sign in and click on "Email API" in the menu and
+subsequently click on the "Integration Guide" link. Then, choose "SMTP Relay",
+create an API key and copy the resulting settings (Server, Ports, Username and
+Password) into the `asreview_config.toml` file. It is important to continue checking
+the "I've updated my settings" checkbox when it is visible **and** click on the
+"Next: verify Integration" button before running the Docker containers.
+
+It is important to verify the reply address of any email the application
+will send. While being logged in on the SendGrid website, click on "Settings" in
+the menu, then on "Sender Authentication" and follow the instructions.
+
+Please note that sending emails via SendGrid with SSL requires port 465 to be
+open for outbound connections on the server. Ensure that the firewall is configured
+appropriately.
+
+### Troubleshooting
+
+If the containers are built and running, but the application is unresponsive,
+consider the following guidelines:
+
+If there is no response whatsoever (not even a white page with a spinner), check the URL
+and the protocol used in the browser. Is HTTP used instead of
+HTTPS, and is the correct port being used (`http://<IP-address>:8080`)? If
+so, verify that the designated ports are actually open on the server (and, on a
+cloud provider, in the provider's firewall as well).
+
+In the `asreview_config.toml` the `SESSION_COOKIE_SAMESITE` parameter is set to the recommended
+"Lax" value. In this Docker setup, it is assumed that both the backend and
+frontend can be accessed using the same domain name or IP address. When this is
+not the case, the value of `SESSION_COOKIE_SAMESITE` must be set to the
+string "None". Although this is an unusual setup it may help when only the
+backend and database containers are deployed and a different frontend runs on
+another server.
+
+By default, the Quick start serves the application over plain HTTP, which does not
+support encryption. Because of this, the `SESSION_COOKIE_SECURE` and
+`REMEMBER_COOKIE_SECURE` parameters in `asreview_config.toml` are set to `false`.
+When the setup is adjusted to work with certificates, as described in [Upgrading
+security: migrate to HTTPS](#upgrading-security-migrate-to-https), these values
+must be set to `true`.
