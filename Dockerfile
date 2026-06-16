@@ -9,7 +9,8 @@ RUN apt-get update \
     && pip install --upgrade pip \
     && pip3 install --user --no-cache-dir \
         "asreview>=2,<3" \
-        gunicorn
+        gunicorn \
+	asreview-dory
         
 # Second stage
 FROM python:3.11-slim
