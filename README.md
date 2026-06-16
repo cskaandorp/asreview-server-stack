@@ -50,7 +50,7 @@ Depending on the features required, the following are also needed:
   migrate to HTTPS](#upgrading-security-migrate-to-https).
 - **An SMTP service** such as [SendGrid](https://sendgrid.com/). This is
   required only for **email verification** and password-reset messages. See
-  [Email server](#email-server).
+  [Email verification](#email-verification-optional).
 - **Open firewall ports**, at minimum the port on which the application is
   served (for example, port `80` for HTTP, or ports `80` and `443` for HTTPS).
 
@@ -187,6 +187,9 @@ SECRET_KEY = "<the generated SECRET_KEY>"
 SECURITY_PASSWORD_SALT = "<the generated SECURITY_PASSWORD_SALT>"
 ```
 
+To require new users to verify their email address (and to enable password-reset
+emails), see [Email verification](#email-verification-optional) before deploying.
+
 ### 3. Build and start the containers
 
 The following command builds the ASReview Docker image and starts all three
@@ -222,6 +225,46 @@ $ docker compose up -d
 
 The application then keeps running after the terminal is closed and restarts
 automatically if the server reboots.
+
+## Email verification (optional)
+
+By default, the application does not send email, and new accounts are usable
+immediately. To require **email verification** of new accounts, and to enable
+**password-reset** messages, the application needs access to an SMTP server.
+
+Running a dedicated mail server is demanding, so an external SMTP relay service is
+normally used. Many providers offer this, for example
+[SendGrid](https://sendgrid.com/), [Mailgun](https://www.mailgun.com/),
+[Amazon SES](https://aws.amazon.com/ses/), or an institutional mail server. The
+exact steps to create relay credentials differ per provider and change over time,
+so the chosen provider's own documentation should be followed. In all cases the
+result is the same set of values: an SMTP host, a port, a username, and a password
+or API key.
+
+These values are entered in `asreview_config.toml`, where email verification is
+also enabled:
+
+```
+EMAIL_VERIFICATION = true
+
+MAIL_SERVER = "<the provider's SMTP host>"
+MAIL_PORT = 465
+MAIL_USE_TLS = false
+MAIL_USE_SSL = true
+MAIL_USERNAME = "<the provider's SMTP username>"
+MAIL_PASSWORD = "<the provider's SMTP password or API key>"
+MAIL_DEFAULT_SENDER = "no_reply@example.org"
+```
+
+The example above uses SSL on port 465. Some providers instead use STARTTLS on
+port 587; in that case set `MAIL_PORT = 587`, `MAIL_USE_SSL = false`, and
+`MAIL_USE_TLS = true`. The corresponding outbound port (465 or 587) must be open
+for outbound connections in the server's firewall.
+
+Most providers also require the sender address (`MAIL_DEFAULT_SENDER`) to be
+verified before they deliver messages; the provider's documentation describes how.
+After changing the configuration, restart the containers for the changes to take
+effect.
 
 ## Upgrading security: migrate to HTTPS
 
@@ -375,36 +418,6 @@ password, respectively. The `_DB` variable specifies the database name.
   database user to something less predictable and to strengthen the password for
   enhanced security.
 
-### Email server
-
-For account verification, but also for the forgot-password feature, an email
-server is required. However, maintaining an email server can be demanding. This can be avoided by using a third-party service like
-[SendGrid](https://sendgrid.com/). Email server
-settings can be set in the `asreview_config.toml` file.
-
-#### SendGrid
-
-This recipe uses the SMTP Relay Service from
-[SendGrid](https://sendgrid.com/): every email sent by the ASReview application
-is relayed by this service. SendGrid is free as long as the application does not
-send more than 100 emails per day. Receiving reply emails from end users is not
-possible when the Relay service is used.
-
-Create an account at SendGrid. Sign in and click on "Email API" in the menu and
-subsequently click on the "Integration Guide" link. Then, choose "SMTP Relay",
-create an API key and copy the resulting settings (Server, Ports, Username and
-Password) into the `asreview_config.toml` file. It is important to continue checking
-the "I've updated my settings" checkbox when it is visible **and** click on the
-"Next: verify Integration" button before running the Docker containers.
-
-It is important to verify the reply address of any email the application
-will send. While being logged in on the SendGrid website, click on "Settings" in
-the menu, then on "Sender Authentication" and follow the instructions.
-
-Please note that sending emails via SendGrid with SSL requires port 465 to be
-open for outbound connections on the server. Ensure that the firewall is configured
-appropriately.
-
 ### Troubleshooting
 
 If the containers are built and running, but the application is unresponsive,
@@ -415,6 +428,19 @@ and the protocol used in the browser. Is HTTP used instead of
 HTTPS, and is the correct port being used (`http://<IP-address>:8080`)? If
 so, verify that the designated ports are actually open on the server (and, on a
 cloud provider, in the provider's firewall as well).
+
+If uploading a dataset fails with an error such as **HTTP 413 (Request Entity Too
+Large)**, the file exceeds the maximum upload size enforced by the NGINX reverse
+proxy. This limit is set by `client_max_body_size` in the active NGINX
+configuration file — `asreview.conf` for HTTP, `asreview_https.conf` for HTTPS —
+and defaults to `100M`. Increase it (for example to `500M`) and restart the
+containers:
+```
+client_max_body_size 500M;
+```
+Very large or slow uploads can additionally exceed Gunicorn's default 30-second
+worker timeout. If that occurs, add a longer timeout to the `gunicorn` command in
+`docker-compose.yml`, for example `--timeout 120`.
 
 In the `asreview_config.toml` the `SESSION_COOKIE_SAMESITE` parameter is set to the recommended
 "Lax" value. In this Docker setup, it is assumed that both the backend and
